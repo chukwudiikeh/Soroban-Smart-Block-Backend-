@@ -503,6 +503,45 @@ model TaxExportJob {
   @@index([status])
 }
 
+// Webhook subscriptions — developer-registered URLs that receive event payloads
+model WebhookSubscription {
+  id              String   @id @default(cuid())
+  url             String                        // target HTTPS endpoint
+  secret          String?                       // optional HMAC-SHA256 signing secret
+  contractAddress String?                       // null = all contracts
+  eventType       String?                       // null = all event types
+  topicSymbol     String?                       // null = all topic symbols
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  deliveries      WebhookDelivery[]
+
+  @@index([contractAddress])
+  @@index([active])
+}
+
+// Delivery log — one row per dispatch attempt
+model WebhookDelivery {
+  id             String   @id @default(cuid())
+  subscriptionId String
+  eventId        String                        // Event.id that triggered this delivery
+  attempt        Int      @default(1)          // 1-based attempt counter
+  status         String   @default("pending")  // pending | success | failed
+  httpStatus     Int?                          // HTTP response code from target
+  responseBody   String?                       // first 500 chars of response
+  errorMsg       String?
+  nextRetryAt    DateTime?                     // null once terminal
+  deliveredAt    DateTime?
+  createdAt      DateTime @default(now())
+
+  subscription   WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+  @@index([status, nextRetryAt])
+  @@index([eventId])
+}
+
 // i18n translation dictionary
 model TranslationKey {
   id              String   @id @default(cuid())
