@@ -95,30 +95,6 @@ contractRouter.get('/:address', validateAddressParam('address'), async (req: Req
   res.json(contract);
 });
 
-// GET /contracts/:address/abi/download — download ABI as .json file
-contractRouter.get('/:address/abi/download', validateAddressParam('address'), async (req: Request, res: Response) => {
-  const contract = await prismaRead.contract.findUnique({
-    where: { address: req.params.address },
-    select: { abi: true, name: true },
-  });
-
-  if (!contract) {
-    return res.status(404).json({ error: 'Contract not found' });
-  }
-
-  const abi = contract.abi as Record<string, unknown> | null;
-  if (!abi) {
-    return res.status(404).json({ error: 'No ABI registered for this contract' });
-  }
-
-  const filename = `${req.params.address}-abi.json`;
-  const body = JSON.stringify(abi, null, 2);
-
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.send(body);
-});
-
 // POST /contracts — register ABI metadata
 contractRouter.post('/', async (req: Request, res: Response) => {
   try {

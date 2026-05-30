@@ -23,37 +23,26 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-const NETWORK_ERROR_CODES = new Set(['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'ERR_NETWORK']);
-const NETWORK_ERROR_MESSAGES = ['econnrefused', 'econnreset', 'etimedout', 'enotfound', 'network error', 'socket hang up'];
-
-function isRetryableError(error: unknown): boolean {
+function isRateLimitError(error: unknown): boolean {
   const axiosError = error as AxiosError | undefined;
   const status = axiosError?.response?.status ?? (error as any)?.status;
-  if (status === 429) return true;
-
-  const code = (error as any)?.code ?? '';
-  if (NETWORK_ERROR_CODES.has(code)) return true;
-
-  const msg = String((error as any)?.message ?? '').toLowerCase();
-  if (NETWORK_ERROR_MESSAGES.some((m) => msg.includes(m))) return true;
-
-  return false;
+  return status === 429 || String((error as any)?.message ?? '').includes('429');
 }
 
-export async function retry<T>(fn: () => Promise<T>): Promise<T> {
+async function retry<T>(fn: () => Promise<T>): Promise<T> {
   let attempt = 0;
   while (true) {
     try {
       return await fn();
     } catch (error: unknown) {
-      if (!isRetryableError(error) || attempt >= MAX_RETRY_ATTEMPTS) {
+      if (!isRateLimitError(error) || attempt >= MAX_RETRY_ATTEMPTS) {
         throw error;
       }
 
-      const backoff = Math.min(16000, 2 ** attempt * 100);
-      const jitter = Math.floor(Math.random() * 100);
+      const backoff = Math.min(16000, 500 * 2 ** attempt);
+      const jitter = Math.floor(Math.random() * 300);
       attempt += 1;
-      console.warn(`RPC retryable error, retrying in ${backoff + jitter}ms (attempt ${attempt})`);
+      console.warn(`RPC rate limit hit, retrying in ${backoff + jitter}ms (attempt ${attempt})`);
       await sleep(backoff + jitter);
     }
   }
