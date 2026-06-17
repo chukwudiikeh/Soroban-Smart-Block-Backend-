@@ -510,3 +510,361 @@ contractRouter.post('/:address/simulate/:functionName', validateAddressParam('ad
     revertAnalysis,
   });
 });
+
+// ── Template Registry & Similarity Endpoints ────────────────────────────────
+
+// Known contract templates
+const KNOWN_TEMPLATES = [
+  { name: 'soroban_token', description: 'SEP-41 Token Standard', functions: ['transfer', 'balance', 'mint', 'burn'] },
+  { name: 'soroban_pair', description: 'AMM Pair (StellarSwap)', functions: ['swap', 'deposit', 'withdraw', 'get_reserves'] },
+  { name: 'soroban_nft', description: 'Soroban NFT', functions: ['mint', 'burn', 'transfer', 'balance_of'] },
+  { name: 'soroban_lending', description: 'Lending Protocol', functions: ['deposit', 'borrow', 'repay', 'liquidate'] },
+  { name: 'soroban_staking', description: 'Staking Contract', functions: ['stake', 'unstake', 'claim_rewards', 'get_stake'] },
+];
+
+// GET /templates — list known contract templates
+contractRouter.get('/templates', async (_req: Request, res: Response) => {
+  return res.json(KNOWN_TEMPLATES);
+});
+
+// GET /contracts/:address/source/similarity — compare against known templates
+contractRouter.get('/:address/source/similarity', validateAddressParam('address'), async (req: Request, res: Response) => {
+  const { address } = req.params;
+  try {
+    const wasm = await fetchOnChainWasm(address);
+    const analysis = analyzeWasmContract(wasm);
+
+    // Calculate similarity to each template based on function signature overlap
+    const similarities = KNOWN_TEMPLATES.map((template) => {
+      const contractFuncNames = new Set(analysis.functions.map((f) => f.name.toLowerCase()));
+      const templateFuncNames = new Set(template.functions.map((f) => f.toLowerCase()));
+
+      const matches = Array.from(contractFuncNames).filter((name) => templateFuncNames.has(name));
+      const totalFuncs = Math.max(contractFuncNames.size, templateFuncNames.size);
+      const similarity = totalFuncs > 0 ? (matches.length / totalFuncs) * 100 : 0;
+
+      return {
+        template: template.name,
+        description: template.description,
+        similarityPercentage: Math.round(similarity * 100) / 100,
+        matchedFunctions: matches,
+        totalMatches: matches.length,
+      };
+    });
+
+    // Persist similarity scores
+    for (const sim of similarities) {
+      try {
+        await (prismaWrite as any).codeSimilarityScore.create({
+          data: {
+            contractAddress: address,
+            templateName: sim.template,
+            similarityPercentage: sim.similarityPercentage,
+            matchedAreas: sim.matchedFunctions,
+            modifiedAreas: [],
+          },
+        });
+      } catch {
+        // Ignore unique constraint errors
+      }
+    }
+
+    return res.json({
+      address,
+      similarities: similarities.filter((s) => s.similarityPercentage > 0),
+    });
+  } catch (err: any) {
+    return res.status(404).json({ error: 'Could not analyze contract', detail: String(err) });
+  }
+});
+
+// GET /contracts/:address/source/similarity/known-templates — get template match status
+contractRouter.get('/:address/source/similarity/known-templates', validateAddressParam('address'), async (req: Request, res: Response) => {
+  const { address } = req.params;
+  try {
+    const scores = await (prismaRead as any).codeSimilarityScore.findMany({
+      where: { contractAddress: address },
+      select: { templateName: true, similarityPercentage: true, matchedAreas: true },
+    });
+
+    return res.json({
+      address,
+      templates: scores.map((s: any) => ({
+        name: s.templateName,
+        similarity: s.similarityPercentage,
+        matched: s.matchedAreas.length,
+      })),
+    });
+  } catch (err: any) {
+    return res.status(404).json({ error: 'Could not retrieve similarity data', detail: String(err) });
+  }
+});
+
+// ── Cross-Contract Reference Graph ──────────────────────────────────────────
+
+// GET /cross-contract/references/:contractAddress — contracts that interact with this one
+contractRouter.get('/cross-contract/references/:address', validateAddressParam('address'), async (req: Request, res: Response) => {
+  const { address } = req.params;
+  try {
+    const references = await (prismaRead as any).crossContractReference.findMany({
+      where: {
+        OR: [{ sourceContract: address }, { targetContract: address }],
+      },
+      select: { sourceContract: true, targetContract: true, referenceType: true, callCount: true },
+    });
+
+    const inbound = references.filter((r: any) => r.targetContract === address);
+    const outbound = references.filter((r: any) => r.sourceContract === address);
+
+    return res.json({
+      address,
+      inbound: inbound.map((r: any) => ({ contract: r.sourceContract, type: r.referenceType, calls: r.callCount })),
+      outbound: outbound.map((r: any) => ({ contract: r.targetContract, type: r.referenceType, calls: r.callCount })),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Could not retrieve cross-contract references', detail: String(err) });
+  }
+});
+
+// GET /contracts/:address/source/graph — call graph for a contract
+contractRouter.get('/:address/source/graph', validateAddressParam('address'), async (req: Request, res: Response) => {
+  const { address } = req.params;
+  try {
+    const wasm = await fetchOnChainWasm(address);
+    const analysis = analyzeWasmContract(wasm);
+
+    // Persist call graph
+    try {
+      const graph = analysis.callGraph;
+      await (prismaWrite as any).contractCallGraph.create({
+        data: {
+          contractAddress: address,
+          adjacencyList: graph,
+          entryPoints: graph.nodes.filter((n: string) => analysis.functions.find((f: any) => f.name === n && f.exportName)?.exportName),
+          depth: calculateGraphDepth(graph),
+          numNodes: graph.nodes.length,
+          numEdges: graph.edges.length,
+        },
+      });
+    } catch {
+      // Non-fatal
+    }
+
+    return res.json({
+      address,
+      graph: analysis.callGraph,
+      depth: calculateGraphDepth(analysis.callGraph),
+    });
+  } catch (err: any) {
+    return res.status(404).json({ error: 'Could not retrieve call graph', detail: String(err) });
+  }
+});
+
+function calculateGraphDepth(graph: any): number {
+  if (!graph.edges || graph.edges.length === 0) return 1;
+  const visited = new Set<string>();
+  const maxDepthFromNode = (node: string, depth = 0): number => {
+    if (visited.has(node) || depth > 100) return depth;
+    visited.add(node);
+    const neighbors = (graph.edges as any[]).filter((e: any) => e.from === node).map((e: any) => e.to);
+    if (neighbors.length === 0) return depth;
+    return Math.max(...neighbors.map((n) => maxDepthFromNode(n, depth + 1)));
+  };
+  return Math.max(...(graph.nodes || []).map((n: string) => maxDepthFromNode(n)));
+}
+
+// ── Visualization & Quality Metrics ─────────────────────────────────────────
+
+// GET /contracts/:address/source/visualizations/call-graph — D3.js compatible format
+contractRouter.get('/:address/source/visualizations/call-graph', validateAddressParam('address'), async (req: Request, res: Response) => {
+  const { address } = req.params;
+  try {
+    const wasm = await fetchOnChainWasm(address);
+    const analysis = analyzeWasmContract(wasm);
+
+    // Convert to D3.js hierarchical format
+    const d3Format = {
+      name: address,
+      children: analysis.functions.map((fn) => ({
+        name: fn.name,
+        value: fn.linesOfCode || 0,
+        complexity: fn.complexity,
+        callCount: fn.calls.length,
+      })),
+    };
+
+    return res.json(d3Format);
+  } catch (err: any) {
+    return res.status(404).json({ error: 'Could not visualize call graph', detail: String(err) });
+  }
+});
+
+// GET /contracts/:address/source/visualizations/complexity-radar — complexity metrics
+contractRouter.get('/:address/source/visualizations/complexity-radar', validateAddressParam('address'), async (req: Request, res: Response) => {
+  const { address } = req.params;
+  try {
+    const wasm = await fetchOnChainWasm(address);
+    const analysis = analyzeWasmContract(wasm);
+
+    const lowComplexity = analysis.functions.filter((f) => f.complexity === 'low').length;
+    const mediumComplexity = analysis.functions.filter((f) => f.complexity === 'medium').length;
+    const highComplexity = analysis.functions.filter((f) => f.complexity === 'high').length;
+
+    return res.json({
+      address,
+      metrics: [
+        { label: 'Low Complexity', value: lowComplexity },
+        { label: 'Medium Complexity', value: mediumComplexity },
+        { label: 'High Complexity', value: highComplexity },
+      ],
+    });
+  } catch (err: any) {
+    return res.status(404).json({ error: 'Could not compute complexity metrics', detail: String(err) });
+  }
+});
+
+// GET /contracts/:address/source/visualizations/function-heatmap — function call frequency
+contractRouter.get('/:address/source/visualizations/function-heatmap', validateAddressParam('address'), async (req: Request, res: Response) => {
+  const { address } = req.params;
+  try {
+    const wasm = await fetchOnChainWasm(address);
+    const analysis = analyzeWasmContract(wasm);
+
+    const heatmap = analysis.functions.map((fn) => ({
+      name: fn.name,
+      incomingCalls: fn.calls.length,
+      storageOps: fn.storageOperations.length,
+      hostCalls: fn.hostCalls.length,
+      complexity: fn.cyclomaticComplexity,
+    }));
+
+    return res.json({ address, heatmap });
+  } catch (err: any) {
+    return res.status(404).json({ error: 'Could not generate heatmap', detail: String(err) });
+  }
+});
+
+// GET /contracts/:address/source/quality — decompilation quality metrics
+contractRouter.get('/:address/source/quality', validateAddressParam('address'), async (req: Request, res: Response) => {
+  const { address } = req.params;
+  try {
+    const wasm = await fetchOnChainWasm(address);
+    const analysis = analyzeWasmContract(wasm);
+
+    const totalFunctions = analysis.functions.length;
+    const functionsWithPseudoCode = analysis.functions.filter((f) => f.pseudoCode && f.pseudoCode.length > 0).length;
+    const functionsWithCFG = analysis.functions.filter((f) => f.cfg && f.cfg.blocks && f.cfg.blocks.length > 0).length;
+    const functionsWithSourceMap = analysis.functions.filter((f) => f.sourceMap && f.sourceMap.length > 0).length;
+
+    return res.json({
+      address,
+      metrics: {
+        functionRecoveryPercent: totalFunctions > 0 ? (functionsWithPseudoCode / totalFunctions) * 100 : 0,
+        cfgRecoveryPercent: totalFunctions > 0 ? (functionsWithCFG / totalFunctions) * 100 : 0,
+        sourceMapCoverage: totalFunctions > 0 ? (functionsWithSourceMap / totalFunctions) * 100 : 0,
+        totalFunctions,
+        estimatedCompleteness: totalFunctions > 0 ? ((functionsWithPseudoCode + functionsWithCFG + functionsWithSourceMap) / (totalFunctions * 3)) * 100 : 0,
+      },
+    });
+  } catch (err: any) {
+    return res.status(404).json({ error: 'Could not compute quality metrics', detail: String(err) });
+  }
+});
+
+// ── Diff & Export Endpoints ────────────────────────────────────────────────
+
+// GET /contracts/:address/source/diff?otherContract=... — diff two contracts
+contractRouter.get('/:address/source/diff', validateAddressParam('address'), async (req: Request, res: Response) => {
+  const { address } = req.params;
+  const { otherContract } = req.query as { otherContract?: string };
+
+  if (!otherContract || typeof otherContract !== 'string') {
+    return res.status(400).json({ error: 'otherContract parameter required' });
+  }
+
+  try {
+    const [wasm1, wasm2] = await Promise.all([fetchOnChainWasm(address), fetchOnChainWasm(otherContract)]);
+    const [analysis1, analysis2] = [analyzeWasmContract(wasm1), analyzeWasmContract(wasm2)];
+
+    const funcs1 = new Map(analysis1.functions.map((f) => [f.name, f]));
+    const funcs2 = new Map(analysis2.functions.map((f) => [f.name, f]));
+
+    const common = Array.from(funcs1.keys()).filter((name) => funcs2.has(name));
+    const unique1 = Array.from(funcs1.keys()).filter((name) => !funcs2.has(name));
+    const unique2 = Array.from(funcs2.keys()).filter((name) => !funcs1.has(name));
+
+    return res.json({
+      contract1: address,
+      contract2: otherContract,
+      summary: {
+        commonFunctions: common.length,
+        uniqueToFirst: unique1.length,
+        uniqueToSecond: unique2.length,
+      },
+      commonFunctions: common,
+      uniqueToFirst: unique1,
+      uniqueToSecond: unique2,
+    });
+  } catch (err: any) {
+    return res.status(404).json({ error: 'Could not diff contracts', detail: String(err) });
+  }
+});
+
+// POST /contracts/source/batch — batch fetch and analyze multiple contracts
+contractRouter.post('/source/batch', async (req: Request, res: Response) => {
+  const { addresses } = req.body as { addresses?: string[] };
+
+  if (!Array.isArray(addresses) || addresses.length === 0) {
+    return res.status(400).json({ error: 'addresses array required' });
+  }
+
+  try {
+    const results = await Promise.allSettled(
+      addresses.slice(0, 100).map(async (addr) => {
+        const wasm = await fetchOnChainWasm(addr);
+        const analysis = analyzeWasmContract(wasm);
+        return { address: addr, functionCount: analysis.functions.length, wasmHash: analysis.wasmHash };
+      }),
+    );
+
+    const successes = results
+      .filter((r) => r.status === 'fulfilled')
+      .map((r: any) => r.value);
+    const failures = results
+      .filter((r) => r.status === 'rejected')
+      .map((r: any, idx) => ({ address: addresses[idx], error: String(r.reason) }));
+
+    return res.json({
+      totalRequested: addresses.length,
+      processed: successes.length,
+      failed: failures.length,
+      results: successes,
+      errors: failures.length > 0 ? failures : undefined,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Batch processing failed', detail: String(err) });
+  }
+});
+
+// GET /contracts/:address/source/export?format=json — export analysis
+contractRouter.get('/:address/source/export', validateAddressParam('address'), async (req: Request, res: Response) => {
+  const { address } = req.params;
+  const { format = 'json' } = req.query as { format?: string };
+
+  if (format !== 'json') {
+    return res.status(400).json({ error: 'Only JSON export currently supported' });
+  }
+
+  try {
+    const wasm = await fetchOnChainWasm(address);
+    const analysis = analyzeWasmContract(wasm);
+
+    // Set download header
+    res.setHeader('Content-Disposition', `attachment; filename="contract_${address.slice(0, 8)}_analysis.json"`);
+    res.setHeader('Content-Type', 'application/json');
+
+    return res.json(analysis);
+  } catch (err: any) {
+    return res.status(404).json({ error: 'Could not export contract analysis', detail: String(err) });
+  }
+});
