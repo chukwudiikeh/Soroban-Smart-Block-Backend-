@@ -89,6 +89,7 @@ model Transaction {
   functionArgs     Json?
   rawXdr           String
   status           String
+  flashLoanAlert   Boolean?
   humanReadable    String?
   feeCharged       String?
   sorobanResources Json?
@@ -121,6 +122,7 @@ model Event {
   decoded         Json?
   ledgerSequence  Int
   ledgerCloseTime DateTime
+  compacted       Boolean?
   createdAt       DateTime @default(now())
 
   ledger      Ledger      @relation(fields: [ledgerSequence], references: [sequence])
@@ -436,6 +438,10 @@ model FeedSubscription {
   batchSize      Int?
   maxRatePerSecond Int?
   status         String   @default("active")
+  lastDeliveryAt DateTime?
+  lastError      String?
+  totalDelivered Int?
+  totalFailed    Int?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -783,6 +789,7 @@ model ComposedTransaction {
   createdAt       DateTime @default(now())
 
   patternInstances CompositionPatternInstance[]
+  patterns         Json?
 
   @@index([ledgerSeq])
   @@index([riskLevel])
@@ -966,7 +973,7 @@ model MevVictim {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  mevEvents MevEvent[]
+  events MevEvent[]
 
   @@index([address])
 }
@@ -1010,6 +1017,7 @@ model MevEvent {
   txOrder         Json?
   confidence      Float
   details         Json?
+  flashLoanAlert  Boolean?
   createdAt       DateTime  @default(now())
 
   victim  MevVictim?  @relation(fields: [victimAddress], references: [address], onUpdate: Cascade)
@@ -1341,19 +1349,40 @@ model DexPool {
   contractAddress String    @unique @db.VarChar(56)
   dexName         String    @db.VarChar(100)
   poolType        String    @db.VarChar(30)
-  tokenA          String    @db.VarChar(56)
-  tokenB          String    @db.VarChar(56)
-  tokenASymbol    String?   @db.VarChar(20)
-  tokenBSymbol    String?   @db.VarChar(20)
+  aprPct          Float?
+  feeBps          Int?
   feeTier         Decimal?  @db.Decimal(5, 4)
-  totalLiquidity  Decimal?  @db.Decimal(30, 0)
-  volume24h       Decimal?  @db.Decimal(30, 0)
   fees24h         Decimal?  @db.Decimal(30, 0)
+  fees24hUsd      Decimal?
+  firstSeenLedger Int?
+  ilRiskScore     Float?
   isActive        Boolean   @default(true)
+  lastEventLedger Int?
+  lastSyncedAt    DateTime?
+  pairKey         String?
+  poolAddress     String?   @unique
+  poolPrices      PoolPrice[]
+  priceAUsd       Decimal?
+  priceBUsd       Decimal?
+  protocol        String?
+  reserveA        Decimal?
+  reserveB        Decimal?
+  tokenA          String    @db.VarChar(56)
+  tokenADecimals  Int?
+  tokenASymbol    String?   @db.VarChar(20)
+  tokenB          String    @db.VarChar(56)
+  tokenBDecimals  Int?
+  tokenBSymbol    String?   @db.VarChar(20)
+  totalLiquidity  Decimal?  @db.Decimal(30, 0)
+  tvlUsd          Decimal?
+  volume1hUsd     Decimal?
+  volume24h       Decimal?  @db.Decimal(30, 0)
+  volume24hUsd    Decimal?
+  volume7dUsd     Decimal?
+  volume30dUsd    Decimal?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @default(now())
 
-  prices         PoolPrice[]
   priceDevA      PriceDeviation[] @relation("priceDevA")
   priceDevB      PriceDeviation[] @relation("priceDevB")
   arbBuyOpps     ArbitrageOpportunity[] @relation("buyPool")
@@ -1409,6 +1438,7 @@ model PriceDeviation {
 model ArbitrageOpportunity {
   id               String    @id @default(uuid())
   pair             String    @db.VarChar(50)
+  pairKey          String?
   tokenA           String    @db.VarChar(56)
   tokenB           String    @db.VarChar(56)
   type             String    @db.VarChar(30)
@@ -1619,4 +1649,1083 @@ model PredictiveApiKey {
   updatedAt DateTime  @updatedAt
 
   @@index([key])
+}
+
+// =========================================================================
+// Batch: 20260621_all_remaining_models
+// =========================================================================
+
+model AmmPool {
+  id              String   @id @default(cuid())
+  poolAddress     String
+  assetAAddress   String
+  assetBAddress   String
+  createdAt       DateTime @default(now())
+}
+
+model AnonymitySetSnapshot {
+  id                String   @id @default(cuid())
+  protocol          String
+  setSize           Int
+  effectiveSetSize  Int
+  timestamp         DateTime
+  createdAt         DateTime @default(now())
+}
+
+model Attestation {
+  id              String   @id @default(cuid())
+  uid             String   @unique
+  profileId       String
+  chainId         String
+  schemaId        String
+  attester        String
+  subject         String
+  recipient       String
+  revoked         Boolean
+  signature       String
+  transactionHash String
+  blockNumber     Int
+  data            Json
+  verified        Boolean
+  verificationMsg String?
+  issuedAt        DateTime?
+  expiresAt       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  profile ReputationProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  actor         String
+  action        String
+  target        String
+  previousState Json?
+  newState      Json?
+  reason        String?
+  createdAt     DateTime @default(now())
+}
+
+model BackfillRequest {
+  id            String    @id @default(cuid())
+  userId        String
+  channelName   String
+  startTime     DateTime
+  endTime       DateTime
+  format        String
+  filters       Json?
+  status        String
+  progress      Float?
+  fileUrl       String?
+  fileSizeBytes Int?
+  recordCount   Int?
+  completedAt   DateTime?
+  errorMessage  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Bn254GasExemption {
+  id               String   @id @default(cuid())
+  transactionHash  String
+  contractAddress  String
+  bn254Ops         String?
+  opCount          Int?
+  feeCharged       String?
+  estimatedWasmFee String?
+  stroopSavings    String?
+  savingsPct       Float?
+  cpuInstructions  Int?
+  msmComplexity    String?
+  ledgerSequence   Int
+  ledgerCloseTime  DateTime
+  createdAt        DateTime @default(now())
+}
+
+model CommodityDualSignerLog {
+  id                     String   @id @default(cuid())
+  transactionHash        String
+  commodityType          String
+  commodityCode          String
+  contractAddress        String
+  traderAddress          String
+  primarySignerAddress   String
+  secondarySignerAddress String
+  quantity               String?
+  unit                   String?
+  notionalValueUsd       String?
+  regulatoryJurisdiction String?
+  expiresAt              DateTime?
+  ledgerSequence         Int
+  ledgerCloseTime        DateTime
+  primarySigned          Boolean?
+  secondarySigned        Boolean?
+  bothSigned             Boolean?
+  complianceStatus       String?
+  createdAt              DateTime @default(now())
+}
+
+model ContractBenchmarkSnapshot {
+  id              String   @id @default(cuid())
+  contractAddress String
+  functionName    String
+  avgCpu          Float?
+  avgMemory       Float?
+  avgFeeStroops   Float?
+  samples         Int
+  fees            Json?
+  cpus            Json?
+  mems            Json?
+  txs             Json?
+  ledgerSequence  Int?
+  createdAt       DateTime @default(now())
+}
+
+model ContractFactory {
+  id                      String   @id @default(cuid())
+  parentContractAddress   String
+  childContractAddress    String
+  creationTransactionHash String
+  creationLedgerSequence  Int
+  creationTimestamp       DateTime
+  createdAt               DateTime @default(now())
+
+  @@unique([parentContractAddress, childContractAddress])
+}
+
+model ContractTemplate {
+  id        String   @id @default(cuid())
+  name      String?
+  createdAt DateTime @default(now())
+}
+
+model DeAnonymizationFinding {
+  id            String   @id @default(cuid())
+  sourceTx      String
+  technique     String
+  confidence    Float?
+  targetAddress String
+  detectedAt    DateTime
+  createdAt     DateTime @default(now())
+}
+
+model DerivedMetric {
+  id        String   @id @default(cuid())
+  name      String
+  value     Float
+  timestamp DateTime
+  createdAt DateTime @default(now())
+}
+
+model DtccSettlementBridge {
+  id               String   @id @default(cuid())
+  transactionHash  String
+  dtccSettlementId String
+  securityId       String
+  securityType     String
+  sellerAddress    String
+  buyerAddress     String
+  quantity         String?
+  settlementAmount String?
+  currency         String
+  contractAddress  String
+  settlementDate   DateTime?
+  ledgerSequence   Int
+  ledgerCloseTime  DateTime
+  settlementStatus String
+  createdAt        DateTime @default(now())
+}
+
+model Endorsement {
+  id              String   @id @default(cuid())
+  profileId       String
+  chainId         String
+  endorser        String
+  subject         String
+  weight          Float?
+  timestamp       DateTime?
+  transactionHash String?
+  createdAt       DateTime @default(now())
+
+  profile ReputationProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+}
+
+model ExportJob {
+  id            String    @id @default(cuid())
+  status        String
+  progress      Float?
+  exportType    String?
+  filePath      String?
+  fileUrl       String?
+  filters       Json?
+  errorMsg      String?
+  errorMessage  String?
+  rowCount      Int?
+  completedAt   DateTime?
+  totalRows     Int?
+  processedRows Int?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model FreezeViolation {
+  id              String   @id @default(cuid())
+  transactionHash String   @unique
+  contractAddress String
+  ledgerSequence  Int
+  ledgerCloseTime DateTime
+  frozenKeys      Json?
+  severity        String?
+  resolution      String?
+  createdAt       DateTime @default(now())
+}
+
+model FrozenLedgerKey {
+  id              String   @id @default(cuid())
+  ledgerKey       String   @unique
+  contractAddress String
+  active          Boolean
+  frozenAtLedger  Int
+  frozenAtTime    DateTime
+  reason          String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model FuzzFinding {
+  id          String   @id @default(cuid())
+  runId       String
+  findingType String
+  description String?
+  fuzzRunId   String?
+  severity    String?
+  createdAt   DateTime @default(now())
+}
+
+model FuzzRun {
+  id          String    @id @default(cuid())
+  sessionId   String
+  contractId  String?
+  status      String
+  totalCases  Int
+  unsafeFound Int
+  coveragePct Float?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model GasAnalyticsSnapshot {
+  id          String   @id @default(cuid())
+  bucket      String
+  bucketStart DateTime
+  bucketEnd   DateTime
+  avgFee      Float?
+  medianFee   Float?
+  peakFee     Float?
+  minFee      Float?
+  txCount     Int
+  createdAt   DateTime @default(now())
+
+  @@unique([bucket, bucketStart])
+}
+
+model GasGolfingTip {
+  id           String   @id @default(cuid())
+  functionName String
+  tips         Json?
+  createdAt    DateTime @default(now())
+}
+
+model GovernanceContract {
+  id              String   @id @default(cuid())
+  contractAddress String   @unique
+  governanceType  String
+  proposals       Json?
+  votingToken     String?
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
+}
+
+model GovernanceDelegate {
+  id              String   @id @default(cuid())
+  contractAddress String
+  delegatee       String
+  delegatedVotes  Float?
+  delegators      String[]
+  proposalsVoted  Int?
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
+
+  @@unique([contractAddress, delegatee])
+}
+
+model GovernanceProposal {
+  id              String    @id @default(cuid())
+  contractAddress String
+  proposalId      String
+  proposer        String
+  title           String
+  description     String?
+  targets         Json
+  startBlock      Int
+  endBlock        Int
+  quorum          Int?
+  status          String
+  executedAt      DateTime?
+  executionTxHash String?
+  votes           Json?
+  votesFor        Float?
+  votesAgainst    Float?
+  votesAbstain    Float?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  governanceVotes GovernanceVote[]
+
+  @@unique([contractAddress, proposalId])
+}
+
+model GovernanceVote {
+  id              String   @id @default(cuid())
+  contractAddress String
+  proposalId      String
+  voter           String
+  weight          Float?
+  support         Boolean?
+  reason          String?
+  transactionHash String?
+  ledgerSequence  Int?
+  createdAt       DateTime @default(now())
+
+  proposal GovernanceProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@unique([contractAddress, proposalId, voter])
+}
+
+model LinkedIdentity {
+  id           String    @id @default(cuid())
+  profileId    String
+  chainId      String
+  address      String
+  verified     Boolean
+  metadata     Json?
+  lastVerified DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  profile ReputationProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, chainId, address])
+}
+
+model MarketDataSnapshot {
+  id               String   @id @default(cuid())
+  tokenAddress     String
+  tokenSymbol      String?
+  priceUsd         Float?
+  volume24h        Float?
+  tvl              Float?
+  liquidity        Float?
+  priceChange1h    Float?
+  priceChange24h   Float?
+  trades24h        Int?
+  uniqueTraders24h Int?
+  timestamp        DateTime
+  createdAt        DateTime @default(now())
+}
+
+model NetworkNode {
+  id                 String    @id @default(cuid())
+  nodeId             String
+  ipAddress          String?
+  port               Int?
+  overlayVersion     Int?
+  ledgerVersion      Int?
+  isValidator        Boolean
+  activeInNetwork    Boolean
+  agreementRate24h   Float?
+  agreementRate7d    Float?
+  agreementRate30d   Float?
+  country            String?
+  countryCode        String?
+  firstSeen          DateTime?
+  lastSeen           DateTime?
+  latitude           Float?
+  longitude          Float?
+  missedSlots24h     Int?
+  missedSlots7d      Int?
+  name               String?
+  networkProfile     String?
+  nodeEvents         Json?
+  nodeMetrics        Json?
+  organization       String?
+  organizationName   String?
+  publicKey          String?  @unique
+  quorumSet          Json?
+  quorumVotes        Int?
+  roundTripLatencyMs Int?
+  state              String?
+  stellarCoreVersion String?
+  uptime24h          Float?
+  uptime7d           Float?
+  uptime30d          Float?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+}
+
+model OperationBenchmark {
+  id            String   @id @default(cuid())
+  name          String
+  avgCpu        Float?
+  avgMemory     Float?
+  avgFeeStroops Float?
+  samples       Int
+  lastUpdated   DateTime?
+  createdAt     DateTime @default(now())
+}
+
+model OracleCallback {
+  id                   String   @id @default(cuid())
+  oracleContractAddress String
+  dataRequestorAddress  String
+  requestTimestamp      DateTime
+  roundTripLatencyMs   Int?
+  status                String
+  createdAt             DateTime @default(now())
+}
+
+model PoolSnapshot {
+  id            String   @id @default(cuid())
+  poolAddress   String
+  ledgerSequence Int
+  reserveA      String?
+  reserveB      String?
+  tvlUsd        Float?
+  volume24hUsd  Float?
+  fees24hUsd    Float?
+  aprPct        Float?
+  priceAUsd     Float?
+  priceBUsd     Float?
+  createdAt     DateTime @default(now())
+}
+
+model PoolSwap {
+  id              String   @id @default(cuid())
+  poolAddress     String
+  tokenIn         String
+  amountIn        String?
+  transactionHash String?
+  ledgerCloseTime DateTime
+  createdAt       DateTime @default(now())
+}
+
+model PortfolioSnapshot {
+  id              String   @id @default(cuid())
+  contractAddress String
+  assetCode       String?
+  assetIssuer     String?
+  estimatedVolume Float?
+  priceXlm        Float?
+  priceUsd        Float?
+  valueXlm        Float?
+  valueUsd        Float?
+  snapshotAt      DateTime
+  createdAt       DateTime @default(now())
+}
+
+model PrivacyAnalytics {
+  id                String   @id @default(cuid())
+  timestamp         DateTime
+  period            String?
+  totalPrivateTx    Int?
+  totalTx           Int?
+  totalVolume       Float?
+  privacyShare      Float?
+  volumeShare       Float?
+  byProtocol        Json?
+  avgAnonymitySet   Float?
+  maxAnonymitySet   Int?
+  medianAnonymitySet Int?
+  avgPrivacyScore   Float?
+  avgRiskScore      Float?
+  uniqueUsers       Int?
+  uniqueContracts   Int?
+  createdAt         DateTime @default(now())
+}
+
+model PrivacyComplianceReport {
+  id                String    @id @default(cuid())
+  address           String    @unique
+  totalPrivateTx    Int?
+  protocolsUsed     String[]
+  riskScore         Float?
+  flagged           Boolean
+  flagReason        String?
+  complianceLabel   String?
+  linkedAddresses   Json?
+  lastActivity      DateTime?
+  reportGeneratedAt DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+model PrivacyProtocolDetail {
+  id              String   @id @default(cuid())
+  protocol        String
+  timestamp       DateTime
+  period          String?
+  txCount         Int?
+  volume          Float?
+  uniqueUsers     Int?
+  uniqueContracts Int?
+  avgAnonymitySet Float?
+  createdAt       DateTime @default(now())
+}
+
+model PrivacyTransaction {
+  id                     String   @id @default(cuid())
+  txHash                 String   @unique
+  timestamp              DateTime
+  protocols              Json?
+  guarantees             Json?
+  anonymitySetSize       Int?
+  effectiveAnonymitySet  Int?
+  privacyScore           Float?
+  riskScore              Float?
+  totalValue             Float?
+  usdValue               Float?
+  participants           String[]
+  contractAddresses      String[]
+  sourceAccount          String?
+  createdAt              DateTime @default(now())
+}
+
+model ReentrancyAlert {
+  id              String   @id @default(cuid())
+  transactionHash String  @unique
+  contractAddress String
+  severity        String?
+  repeatedWithdrawCalls Int?
+  createdAt       DateTime @default(now())
+}
+
+model RegisteredDapp {
+  id        String   @id @default(cuid())
+  name      String
+  apiKey    String
+  createdAt DateTime @default(now())
+}
+
+model ReputationBadge {
+  id        String   @id @default(cuid())
+  profileId String
+  badgeType String
+  title     String?
+  description String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  profile ReputationProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+}
+
+model ReputationDelegation {
+  id         String   @id @default(cuid())
+  delegator  String
+  delegatee  String
+  amount     String?
+  createdAt  DateTime @default(now())
+}
+
+model ReputationDispute {
+  id           String    @id @default(cuid())
+  profileId    String
+  challenger   String
+  respondent   String
+  status       String
+  challenge    String?
+  evidenceHash String?
+  quorumVotes  Int?
+  outcome      String?
+  resolvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  votes ReputationDisputeVote[]
+}
+
+model ReputationDisputeVote {
+  id              String   @id @default(cuid())
+  disputeId       String
+  voter           String
+  vote            String?
+  weight          Float?
+  signature       String?
+  transactionHash String?
+  createdAt       DateTime @default(now())
+
+  dispute ReputationDispute @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+}
+
+model ReputationGovernanceVote {
+  id         String   @id @default(cuid())
+  proposalId String
+  voter      String
+  vote       String?
+  weight     Float?
+  reason     String?
+  createdAt  DateTime @default(now())
+
+  @@unique([proposalId, voter])
+}
+
+model ReputationNft {
+  id          String   @id @default(cuid())
+  address     String
+  badgeType   String
+  tokenId     String?
+  mintedTxHash String?
+  createdAt   DateTime @default(now())
+}
+
+model ReputationProfile {
+  id              String    @id @default(cuid())
+  address         String    @unique
+  chain           String?
+  combinedScore   Float?
+  sorobanScore    Float?
+  stellarScore    Float?
+  ethScore        Float?
+  solScore        Float?
+  categoryScores  Json?
+  signalBreakdown Json?
+  categories      String[]
+  badgeIds        String[]
+  lastUpdated     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  attestations     Attestation[]
+  badges           ReputationBadge[]
+  credentials      VerifiableCredential[]
+  endorsements     Endorsement[]
+  linkedIdentities LinkedIdentity[]
+  signals          ReputationSignal[]
+  trustConnections ReputationTrustConnection[]
+}
+
+model ReputationTrustConnection {
+  id              String   @id @default(cuid())
+  profileId       String
+  fromAddress     String?
+  toAddress       String?
+  chainId         String?
+  type            String?
+  timestamp       DateTime?
+  transactionHash String?
+  weight          Float?
+  createdAt       DateTime @default(now())
+
+  profile ReputationProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+}
+
+model ReputationSignal {
+  id              String   @id @default(cuid())
+  profileId       String
+  signalType      String
+  value           Float?
+  weight          Float?
+  normalizedScore Float?
+  chain           String?
+  metadata        Json?
+  createdAt       DateTime @default(now())
+
+  profile ReputationProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+}
+
+model RwaComplianceEvent {
+  id                  String   @id @default(cuid())
+  transactionHash     String   @unique
+  ledgerSequence      Int
+  ledgerCloseTime     DateTime
+  assetContractAddress String
+  issuerAddress       String?
+  targetAddress       String?
+  amount              String?
+  complianceReason    String?
+  humanStatement      String?
+  createdAt           DateTime @default(now())
+}
+
+model SandboxAccount {
+  id        String   @id @default(cuid())
+  sessionId String
+  address   String
+  publicKey String?
+  balance   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([sessionId, publicKey])
+}
+
+model SandboxCall {
+  id              String   @id @default(cuid())
+  sessionId       String
+  contractAddress String
+  contractId      String?
+  functionName    String
+  args            Json?
+  results         Json?
+  gasUsed         Int?
+  success         Boolean
+  createdAt       DateTime @default(now())
+}
+
+model SandboxCiRun {
+  id         String    @id @default(cuid())
+  sessionId  String
+  status     String
+  passed     Int?
+  failed     Int?
+  totalTests Int?
+  logs       String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
+
+model SandboxContract {
+  id        String   @id @default(cuid())
+  sessionId String
+  address   String
+  contractId String?
+  name      String?
+  state     Json?
+  abi       Json?
+  source    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([sessionId, contractId])
+}
+
+model SandboxSession {
+  id        String    @id @default(cuid())
+  userId    String
+  status    String
+  state     String?
+  context   Json?
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model SandboxShare {
+  id        String    @id @default(cuid())
+  sessionId String
+  shareId   String    @unique
+  viewOnly  Boolean?
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+}
+
+model SandboxSnapshot {
+  id        String   @id @default(cuid())
+  sessionId String
+  data      Json
+  label     String?
+  state     String?
+  createdAt DateTime @default(now())
+}
+
+model SettlementBatchSummary {
+  id              String   @id @default(cuid())
+  contractAddress String
+  ledgerMin       Int
+  ledgerMax       Int
+  txCount         Int
+  totalAmount     String?
+  batchId         String
+  windowKey       String?
+  eventCount      Int?
+  compacted       Boolean?
+  createdAt       DateTime @default(now())
+
+  @@unique([contractAddress, windowKey])
+}
+
+model ShieldedTransfer {
+  id              String   @id @default(cuid())
+  transactionHash String
+  contractAddress String
+  fromAddress     String
+  toAddress       String
+  amount          String?
+  isConfidential  Boolean
+  ledgerSequence  Int
+  ledgerCloseTime DateTime
+  createdAt       DateTime @default(now())
+}
+
+model SignatureInspection {
+  id              String   @id @default(cuid())
+  transactionHash String   @unique
+  ledgerSequence  Int
+  curveType       String?
+  isPasskey       Boolean?
+  pubKeyX         String?
+  pubKeyY         String?
+  label           String?
+  createdAt       DateTime @default(now())
+}
+
+model SignerSnapshot {
+  id              String   @id @default(cuid())
+  contractAddress String
+  signers         Json?
+  highThreshold   Int?
+  ledgerSequence  Int
+  createdAt       DateTime @default(now())
+}
+
+model StandardCompliance {
+  id            String   @id @default(cuid())
+  contractType  String
+  functionName  String
+  maxFeeStroops Int?
+  createdAt     DateTime @default(now())
+}
+
+model StateContention {
+  id              String   @id @default(cuid())
+  ledgerSequence  Int
+  contractAddress String
+  stateKey        String?
+  txHashes        String[]
+  conflictCount   Int?
+  delayMs         Int?
+  delayLabel      String?
+  createdAt       DateTime @default(now())
+}
+
+model ThreatAdvisory {
+  id                String    @id @default(cuid())
+  title             String
+  description       String?
+  severity          String
+  cvssScore         Float?
+  cveId             String?   @unique
+  ghsaId            String?   @unique
+  affectedContracts String[]
+  affectedChains    String[]
+  mitigations       String?
+  tags              String[]
+  sourceId          String?
+  status            String
+  publishedAt       DateTime?
+  externalUrl       String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+model ThreatComment {
+  id         String   @id @default(cuid())
+  advisoryId String
+  authorKey  String
+  body       String
+  createdAt  DateTime @default(now())
+}
+
+model ThreatReview {
+  id          String   @id @default(cuid())
+  advisoryId  String
+  role        String?
+  decision    String?
+  notes       String?
+  reviewerKey String
+  createdAt   DateTime @default(now())
+}
+
+model TipSubscription {
+  id        String    @id @default(cuid())
+  channel   String
+  target    String
+  active    Boolean
+  filters   Json?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([channel, target])
+}
+
+model TipWebhook {
+  id        String    @id @default(cuid())
+  url       String
+  events    Json?
+  secret    String?
+  active    Boolean
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Token {
+  id              String    @id @default(cuid())
+  address         String
+  name            String?
+  symbol          String?
+  decimals        Int?
+  totalSupply     String?
+  contractAddress String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model TokenPrice {
+  id          String   @id @default(cuid())
+  tokenAddress String  @unique
+  priceUsd    Float?
+  symbol      String?
+  source      String?
+  createdAt   DateTime @default(now())
+}
+
+model VerifiableCredential {
+  id                  String   @id @default(cuid())
+  profileId           String
+  credentialId        String
+  context             String?
+  type                String?
+  issuer              String?
+  issuanceDate        DateTime?
+  expirationDate      DateTime?
+  subjectId           String?
+  subjectData         Json?
+  proofType           String?
+  proofCreated        DateTime?
+  verificationMethod  String?
+  proofPurpose        String?
+  proofValue          String?
+  createdAt           DateTime @default(now())
+
+  profile ReputationProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+}
+
+model VolumeAlert {
+  id              String   @id @default(cuid())
+  contractAddress String
+  acknowledged    Boolean
+  baseline        Float?
+  currentCount    Int?
+  detectedAt      DateTime
+  severity        String?
+  stdDev          Float?
+  message         String?
+  windowMinutes   Int?
+  zScore          Float?
+  createdAt       DateTime @default(now())
+}
+
+model VulnerabilitySource {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  sourceType  String
+  feedUrl     String?
+  lastFetchAt DateTime?
+  active      Boolean
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model WebhookDelivery {
+  id             String    @id @default(cuid())
+  subscriptionId String
+  eventId        String?
+  attempt        Int?
+  status         String?
+  httpStatus     Int?
+  responseBody   String?
+  errorMsg       String?
+  deliveredAt    DateTime?
+  nextRetryAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  subscription WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+}
+
+model WebhookSubscription {
+  id              String    @id @default(cuid())
+  url             String
+  secret          String?
+  contractAddress String?
+  eventType       String?
+  topicSymbol     String?
+  active          Boolean
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  delivery WebhookDelivery[]
+}
+
+model YieldDistribution {
+  id              String   @id @default(cuid())
+  transactionHash String
+  contractAddress String
+  distributionId  String
+  recipient       String
+  amount          String?
+  tokenSymbol     String?
+  windowLabel     String?
+  ledgerSequence  Int
+  ledgerCloseTime DateTime
+  createdAt       DateTime @default(now())
+}
+
+model YieldHistorySnapshot {
+  id            String   @id @default(cuid())
+  opportunityId String
+  snapshotDate  DateTime
+  apy           Float?
+  baseApy       Float?
+  incentiveApy  Float?
+  tvl           Float?
+  ledgerSequence Int
+  createdAt     DateTime @default(now())
+}
+
+model YieldOpportunity {
+  id              String    @id @default(cuid())
+  contractAddress String
+  name            String
+  type            String
+  tokens          String[]
+  baseApy         Float?
+  incentiveApy    Float?
+  totalApy        Float?
+  tvl             Float?
+  lockupDays      Int?
+  minDeposit      String?
+  depositFee      Float?
+  withdrawFee     Float?
+  riskScore       Float?
+  riskLabel       String?
+  lastObservedAt  DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model ZkpVerificationEvent {
+  id                  String   @id @default(cuid())
+  transactionHash     String
+  contractAddress     String
+  proofType           String?
+  publicInputHash     String?
+  verificationResult  Boolean?
+  certaintyPercent    Float?
+  ledgerSequence      Int
+  ledgerCloseTime     DateTime
+  createdAt           DateTime @default(now())
 }
