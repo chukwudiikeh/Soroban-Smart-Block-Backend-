@@ -11,7 +11,6 @@ import { prismaRead, prismaWrite } from '../db';
 import {
   buildCallGraph,
   detectReentrancy,
-  computeRiskScore,
   getPatternDefinitions,
   getRiskLevel,
   hasLoops,
@@ -83,9 +82,7 @@ reentrancyRouter.get(
       }),
     ]);
 
-    const riskLevel = riskScore
-      ? getRiskLevel(riskScore.riskScore)
-      : 'safe';
+    const riskLevel = riskScore ? getRiskLevel(riskScore.riskScore) : 'safe';
 
     res.json({
       contract: address,
@@ -243,8 +240,7 @@ reentrancyRouter.get(
       functionName: v.functionName,
       depth: v.depth,
       // Color-coded by risk: green → yellow → red based on depth
-      color:
-        v.depth >= 4 ? '#ef4444' : v.depth >= 2 ? '#f59e0b' : '#22c55e',
+      color: v.depth >= 4 ? '#ef4444' : v.depth >= 2 ? '#f59e0b' : '#22c55e',
       // Node size proportional to position in call chain
       size: 8 + v.depth * 2,
     }));
@@ -481,15 +477,14 @@ reentrancyRouter.get(
       orderBy: { timestamp: 'desc' },
     });
 
-    const [totalVertices, totalEdges, totalAlerts, unacknowledgedAlerts] =
-      await Promise.all([
-        prismaRead.callGraphVertex.count(),
-        prismaRead.callGraphEdge.count(),
-        prismaRead.reentrancyAlertExtended.count(),
-        prismaRead.reentrancyAlertExtended.count({
-          where: { acknowledged: false },
-        }),
-      ]);
+    const [totalVertices, totalEdges, totalAlerts, unacknowledgedAlerts] = await Promise.all([
+      prismaRead.callGraphVertex.count(),
+      prismaRead.callGraphEdge.count(),
+      prismaRead.reentrancyAlertExtended.count(),
+      prismaRead.reentrancyAlertExtended.count({
+        where: { acknowledged: false },
+      }),
+    ]);
 
     res.json({
       latestSnapshot: latestStats,

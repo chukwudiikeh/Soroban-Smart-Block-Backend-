@@ -9,8 +9,6 @@
 import {
   type CallGraph,
   type ReentrancyFinding,
-  type ReentrancyType,
-  type ReentrancySeverity,
   type DetectionPattern,
   ReentrancyTypes,
   ReentrancySeverities,
@@ -19,8 +17,6 @@ import {
   findCycles,
   findContractCycles,
   mapContractCycleToVertexPath,
-  buildContractSequence,
-  buildContractAdjacency,
   buildVertexContractMap,
   getVertex,
 } from './call-graph';
@@ -36,10 +32,7 @@ function extractLoopPathFromContractCycle(
 }
 
 /** Extract loop path from vertex-level cycle IDs */
-function extractLoopPath(
-  cycle: string[],
-  graph: CallGraph,
-): ReentrancyFinding['loopPath'] {
+function extractLoopPath(cycle: string[], graph: CallGraph): ReentrancyFinding['loopPath'] {
   const contractMap = buildVertexContractMap(graph);
   return cycle.map((vtxId) => {
     const v = getVertex(graph, vtxId);
@@ -63,7 +56,14 @@ function extractLoopPath(
  */
 function detectSimpleReentrancy(graph: CallGraph): ReturnType<DetectionPattern['detect']> {
   // Check if any vertex calls another vertex with the same contract address
-  const selfCalls: Array<{ from: string; to: string; fromFn: string; toFn: string; fromIdx: number; toIdx: number }> = [];
+  const selfCalls: Array<{
+    from: string;
+    to: string;
+    fromFn: string;
+    toFn: string;
+    fromIdx: number;
+    toIdx: number;
+  }> = [];
 
   for (const edge of graph.edges) {
     const fromVtx = getVertex(graph, edge.fromVertexId);
@@ -121,13 +121,14 @@ function detectSimpleReentrancy(graph: CallGraph): ReturnType<DetectionPattern['
 
   return {
     confidence,
-    loopPath: loopPath.length > 0
-      ? loopPath
-      : repeated.map(([addr]) => ({
-          contractAddress: addr,
-          functionName: 'unknown',
-          callIndex: 0,
-        })),
+    loopPath:
+      loopPath.length > 0
+        ? loopPath
+        : repeated.map(([addr]) => ({
+            contractAddress: addr,
+            functionName: 'unknown',
+            callIndex: 0,
+          })),
   };
 }
 
@@ -165,10 +166,7 @@ function detectCrossContractReentrancy(graph: CallGraph): ReturnType<DetectionPa
     };
   }
 
-  const loopPath = extractLoopPathFromContractCycle(
-    crossContractCycles[0],
-    graph,
-  );
+  const loopPath = extractLoopPathFromContractCycle(crossContractCycles[0], graph);
   return {
     confidence: Math.min(1, 0.5 + crossContractCycles.length * 0.15),
     loopPath,
@@ -213,10 +211,7 @@ function detectMultiStepReentrancy(graph: CallGraph): ReturnType<DetectionPatter
     };
   }
 
-  const loopPath = extractLoopPathFromContractCycle(
-    multiStepCycles[0],
-    graph,
-  );
+  const loopPath = extractLoopPathFromContractCycle(multiStepCycles[0], graph);
   return {
     confidence: Math.min(1, 0.4 + multiStepCycles.length * 0.1),
     loopPath,
@@ -255,9 +250,7 @@ function detectReadOnlyReentrancy(graph: CallGraph): ReturnType<DetectionPattern
         const intermediateWrites = iv.postStateWrites ?? [];
         const firstReads = firstVtx.preStateReads ?? [];
 
-        const staleKeys = firstReads.filter((key) =>
-          intermediateWrites.includes(key),
-        );
+        const staleKeys = firstReads.filter((key) => intermediateWrites.includes(key));
 
         if (staleKeys.length > 0) {
           const loopPath = extractLoopPathFromContractCycle(cycle, graph);
@@ -316,8 +309,7 @@ function detectCrossFunctionReentrancy(graph: CallGraph): ReturnType<DetectionPa
     const last = getVertex(graph, cycle[cycle.length - 1]);
     if (!first || !last) return false;
     return (
-      first.contractAddress === last.contractAddress &&
-      first.functionName !== last.functionName
+      first.contractAddress === last.contractAddress && first.functionName !== last.functionName
     );
   });
 
@@ -360,9 +352,7 @@ function detectDestructiveReentrancy(graph: CallGraph): ReturnType<DetectionPatt
         if (!vtx.postStateWrites?.length) continue;
 
         const storesCode = vtx.postStateWrites.some((key) =>
-          CODE_KEY_PATTERNS.some((pattern) =>
-            key.toLowerCase().includes(pattern),
-          ),
+          CODE_KEY_PATTERNS.some((pattern) => key.toLowerCase().includes(pattern)),
         );
 
         if (storesCode) {
@@ -408,24 +398,21 @@ export const DETECTION_PATTERNS: DetectionPattern[] = [
   {
     type: ReentrancyTypes.SIMPLE,
     name: 'Simple Reentrancy',
-    description:
-      'Same contract calls itself within a single transaction. Pattern: A → A.',
+    description: 'Same contract calls itself within a single transaction. Pattern: A → A.',
     severity: ReentrancySeverities.HIGH,
     detect: detectSimpleReentrancy,
   },
   {
     type: ReentrancyTypes.CROSS_CONTRACT,
     name: 'Cross-Contract Reentrancy',
-    description:
-      'Two different contracts calling each other in a loop. Pattern: A → B → A.',
+    description: 'Two different contracts calling each other in a loop. Pattern: A → B → A.',
     severity: ReentrancySeverities.CRITICAL,
     detect: detectCrossContractReentrancy,
   },
   {
     type: ReentrancyTypes.MULTI_STEP,
     name: 'Multi-Step Reentrancy',
-    description:
-      'Reentrancy loop spanning 4+ contract calls. Pattern: A → B → C → A.',
+    description: 'Reentrancy loop spanning 4+ contract calls. Pattern: A → B → C → A.',
     severity: ReentrancySeverities.CRITICAL,
     detect: detectMultiStepReentrancy,
   },
@@ -480,9 +467,7 @@ export function detectReentrancy(
 
       // Compute profit potential based on confidence and value at risk
       const profitPotential =
-        usdValueAtRisk != null
-          ? usdValueAtRisk * result.confidence
-          : undefined;
+        usdValueAtRisk != null ? usdValueAtRisk * result.confidence : undefined;
 
       const finding: ReentrancyFinding = {
         id: `finding_${txHash.slice(0, 12)}_${pattern.type}`,

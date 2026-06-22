@@ -1,13 +1,16 @@
 import { Router, Request, Response } from 'express';
-import { Keypair, Networks } from '@stellar/stellar-sdk';
+import { Keypair } from '@stellar/stellar-sdk';
 import { prismaWrite as prisma } from '../db';
 import {
-  createChallenge, consumeChallenge, getChallenge,
-  incrementAttempts, checkChallengeRateLimit, CHALLENGE_TTL,
+  createChallenge,
+  consumeChallenge,
+  getChallenge,
+  incrementAttempts,
+  checkChallengeRateLimit,
 } from '../auth/challenge';
-import { issueTokens, verifyToken, hashToken, generateSessionId, REFRESH_TOKEN_TTL } from '../auth/tokens';
+import { issueTokens, hashToken, generateSessionId, REFRESH_TOKEN_TTL } from '../auth/tokens';
 import { getJwks, rotateKeys } from '../auth/keys';
-import { tierFromTokenHolding, getFeatures, featureList } from '../auth/rbac';
+import { getFeatures, featureList } from '../auth/rbac';
 import { requireAuth, requireRole } from '../auth/middleware';
 
 export const authRouter = Router();
@@ -178,7 +181,12 @@ authRouter.post('/logout', requireAuth, async (req: Request, res: Response) => {
     data: { isActive: false, revokedAt: new Date(), revocationReason: 'logout' },
   });
   await prisma.authEvent.create({
-    data: { userId: req.user!.id, sessionId: req.user!.sessionId, eventType: 'logout', ipAddress: req.ip },
+    data: {
+      userId: req.user!.id,
+      sessionId: req.user!.sessionId,
+      eventType: 'logout',
+      ipAddress: req.ip,
+    },
   });
   res.json({ success: true });
 });

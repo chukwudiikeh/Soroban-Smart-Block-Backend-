@@ -9,7 +9,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildCallGraph,
-  findCycles,
   findContractCycles,
   hasLoops,
   computeMaxDepth,
@@ -28,12 +27,7 @@ import {
   getRiskLevel,
   computeRiskFactors,
 } from '../src/indexer/reentrancy-fortress/scoring';
-import type {
-  CallGraph,
-  ReentrancyFinding,
-  ReentrancyType,
-  ReentrancySeverity,
-} from '../src/indexer/reentrancy-fortress/types';
+import type { ReentrancyFinding, ReentrancyType } from '../src/indexer/reentrancy-fortress/types';
 
 // ── Test Helpers ──────────────────────────────────────────────────────────────
 
@@ -71,9 +65,7 @@ function hasFindingsOfType(findings: ReentrancyFinding[], type: ReentrancyType):
 
 describe('CallGraph Builder', () => {
   it('builds a simple call graph with one vertex and no edges', () => {
-    const calls: TraceCall[] = [
-      makeCall(CONTRACT_A, 'transfer', { depth: 0, callIndex: 0 }),
-    ];
+    const calls: TraceCall[] = [makeCall(CONTRACT_A, 'transfer', { depth: 0, callIndex: 0 })];
     const graph = buildCallGraph(TX, calls);
     expect(graph.vertices).toHaveLength(1);
     expect(graph.edges).toHaveLength(0);
@@ -266,9 +258,7 @@ describe('Detection: Cross-Contract Reentrancy (A→B→A)', () => {
     ];
     const graph = buildCallGraph(TX, calls);
     const findings = detectReentrancy(TX, graph, '1000000', 50000);
-    const crossFinding = findings.find(
-      (f) => f.reentrancyType === 'CROSS_CONTRACT',
-    );
+    const crossFinding = findings.find((f) => f.reentrancyType === 'CROSS_CONTRACT');
     expect(crossFinding).toBeDefined();
     expect(crossFinding!.valueAtRisk).toBe('1000000');
     expect(crossFinding!.usdValueAtRisk).toBe(50000);
@@ -338,9 +328,7 @@ describe('Detection: Read-Only Reentrancy', () => {
     const graph = buildCallGraph(TX, calls);
     const findings = detectReentrancy(TX, graph);
 
-    const readOnlyFinding = findings.find(
-      (f) => f.reentrancyType === 'READ_ONLY',
-    );
+    const readOnlyFinding = findings.find((f) => f.reentrancyType === 'READ_ONLY');
     expect(readOnlyFinding).toBeDefined();
   });
 
@@ -379,9 +367,7 @@ describe('Detection: Cross-Function Reentrancy (A.func1→B→A.func2)', () => {
     ];
     const graph = buildCallGraph(TX, calls);
     const findings = detectReentrancy(TX, graph);
-    const crossFunc = findings.filter(
-      (f) => f.reentrancyType === 'CROSS_FUNCTION',
-    );
+    const crossFunc = findings.filter((f) => f.reentrancyType === 'CROSS_FUNCTION');
     expect(crossFunc.length).toBe(0);
   });
 });
@@ -649,9 +635,7 @@ describe('Full Analysis Pipeline', () => {
 
     expect(findings.length).toBeGreaterThan(0);
 
-    const crossContract = findings.find(
-      (f) => f.reentrancyType === 'CROSS_CONTRACT',
-    );
+    const crossContract = findings.find((f) => f.reentrancyType === 'CROSS_CONTRACT');
     expect(crossContract).toBeDefined();
     expect(crossContract!.severity).toBe('CRITICAL');
 
@@ -694,9 +678,7 @@ describe('Full Analysis Pipeline', () => {
   });
 
   it('handles single-contract call with no reentrancy', () => {
-    const calls: TraceCall[] = [
-      makeCall(CONTRACT_A, 'getScore', { depth: 0, callIndex: 0 }),
-    ];
+    const calls: TraceCall[] = [makeCall(CONTRACT_A, 'getScore', { depth: 0, callIndex: 0 })];
     const graph = buildCallGraph(TX, calls);
     const findings = detectReentrancy(TX, graph);
     expect(findings).toHaveLength(0);

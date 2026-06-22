@@ -12,13 +12,9 @@
 
 import { prismaRead, prismaWrite } from '../../db';
 import { buildCallGraph, type TraceCall } from './call-graph';
-import { detectReentrancy, getPatternDefinitions } from './detector';
+import { detectReentrancy } from './detector';
 import { computeRiskScore } from './scoring';
 import {
-  type CallGraph,
-  type ReentrancyFinding,
-  ReentrancyTypes,
-  ReentrancySeverities,
   type ReentrancySeverity,
   type RiskScore,
   type ReentrancyStatsSnapshot,
@@ -251,7 +247,7 @@ export async function runBatchAnalysis(config: AnalysisConfig = DEFAULT_CONFIG):
   let criticalFindings = 0;
 
   // Group by hash for batch processing
-  const txMap = new Map<string, typeof recentTxs[0][]>();
+  const txMap = new Map<string, (typeof recentTxs)[0][]>();
   for (const tx of recentTxs) {
     const existing = txMap.get(tx.hash) ?? [];
     existing.push(tx);
@@ -282,9 +278,7 @@ export async function runBatchAnalysis(config: AnalysisConfig = DEFAULT_CONFIG):
     const result = await analyzeAndPersist(txHash, calls);
     processed++;
     totalFindings += result.findings.length;
-    criticalFindings += result.findings.filter(
-      (f) => f.severity === 'CRITICAL',
-    ).length;
+    criticalFindings += result.findings.filter((f) => f.severity === 'CRITICAL').length;
   }
 
   // Update stats after batch run
@@ -331,7 +325,7 @@ export async function runHistoricalBackfill(
       },
     });
 
-    const txMap = new Map<string, typeof txs[0][]>();
+    const txMap = new Map<string, (typeof txs)[0][]>();
     for (const tx of txs) {
       const existing = txMap.get(tx.hash) ?? [];
       existing.push(tx);
@@ -356,9 +350,7 @@ export async function runHistoricalBackfill(
       const result = await analyzeAndPersist(txHash, calls);
       processed++;
       totalFindings += result.findings.length;
-      criticalFindings += result.findings.filter(
-        (f) => f.severity === 'CRITICAL',
-      ).length;
+      criticalFindings += result.findings.filter((f) => f.severity === 'CRITICAL').length;
     }
 
     currentLedger += 100;
@@ -401,9 +393,7 @@ export async function computeAndPersistStats(): Promise<ReentrancyStatsSnapshot>
   const contractsAnalyzed = riskScores.length;
   const highRiskContracts = riskScores.filter((s) => s.riskScore >= 50).length;
 
-  const criticalFindings = allFindings.filter(
-    (f) => f.severity === 'CRITICAL',
-  ).length;
+  const criticalFindings = allFindings.filter((f) => f.severity === 'CRITICAL').length;
   const totalFindings = allFindings.length;
 
   // Compute pattern frequency
@@ -419,8 +409,7 @@ export async function computeAndPersistStats(): Promise<ReentrancyStatsSnapshot>
 
   // Compute depth stats
   const depths = allVertices.map((v) => v.depth);
-  const avgDepth =
-    depths.length > 0 ? depths.reduce((s, d) => s + d, 0) / depths.length : 0;
+  const avgDepth = depths.length > 0 ? depths.reduce((s, d) => s + d, 0) / depths.length : 0;
   const maxDepth = depths.length > 0 ? Math.max(...depths) : 0;
 
   // Total value at risk
@@ -435,9 +424,7 @@ export async function computeAndPersistStats(): Promise<ReentrancyStatsSnapshot>
     }
   }
 
-  const contractsWithLoops = [...patternCounts.entries()]
-    .filter(([, count]) => count > 0)
-    .length;
+  const contractsWithLoops = [...patternCounts.entries()].filter(([, count]) => count > 0).length;
 
   const snapshot: ReentrancyStatsSnapshot = {
     timestamp: new Date(),
