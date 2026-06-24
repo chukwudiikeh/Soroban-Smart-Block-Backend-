@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { decodeScValXdr, humanReadableScVal } from '../src/archive/scval-decoder';
+import { decodeScValXdr } from '../src/archive/scval-decoder';
 import { xdr } from '@stellar/stellar-sdk';
 
 vi.mock('../src/db', () => ({

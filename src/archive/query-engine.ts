@@ -1,5 +1,4 @@
 import { prisma } from '../db';
-import { decodeScValXdr } from './scval-decoder';
 
 export interface StateAtLedger {
   contractAddress: string;
