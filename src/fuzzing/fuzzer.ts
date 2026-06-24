@@ -1,5 +1,5 @@
 import { buildCorpusFromHistory, CorpusEntry, getBoundaryValues } from './corpus';
-import { generateMutations, MutationResult } from './mutator';
+import { generateMutations } from './mutator';
 import { rpc } from '../indexer/rpc';
 import {
   TransactionBuilder,
