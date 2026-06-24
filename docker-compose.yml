@@ -1,5 +1,3 @@
-version: '3.9'
-
 # ─── Shared build context ─────────────────────────────────────────────────────
 x-app-build: &app-build
   build: .
@@ -22,6 +20,51 @@ x-db-healthcheck: &db-healthcheck
   timeout: 5s
   retries: 5
 
+x-api-healthcheck: &api-healthcheck
+  test: ['CMD-SHELL', 'wget -qO- http://localhost:$${PORT:-3000}/health || exit 1']
+  interval: 10s
+  timeout: 5s
+  retries: 5
+  start_period: 30s
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+
+x-db-resources: &db-resources
+  limits:
+    cpus: '0.50'
+    memory: 512M
+  reservations:
+    cpus: '0.10'
+    memory: 128M
+
+x-api-resources: &api-resources
+  limits:
+    cpus: '1.00'
+    memory: 512M
+  reservations:
+    cpus: '0.10'
+    memory: 128M
+
+x-indexer-resources: &indexer-resources
+  limits:
+    cpus: '0.50'
+    memory: 256M
+  reservations:
+    cpus: '0.05'
+    memory: 64M
+
+x-redis-resources: &redis-resources
+  limits:
+    cpus: '0.25'
+    memory: 128M
+  reservations:
+    cpus: '0.05'
+    memory: 32M
+
 services:
 
   # ═══════════════════════════════════════════════════════════════════════════
@@ -31,6 +74,7 @@ services:
   # ═══════════════════════════════════════════════════════════════════════════
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - '6379:6379'
     volumes:
@@ -40,12 +84,16 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources: *redis-resources
+    logging: *logging
 
   # ═══════════════════════════════════════════════════════════════════════════
   # TESTNET
   # ═══════════════════════════════════════════════════════════════════════════
   db-testnet:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
@@ -55,9 +103,13 @@ services:
     volumes:
       - pgdata-testnet:/var/lib/postgresql/data
     healthcheck: *db-healthcheck
+    deploy:
+      resources: *db-resources
+    logging: *logging
 
   api-testnet:
     <<: [*app-build, *security]
+    restart: unless-stopped
     ports:
       - '3000:3000'
     environment:
@@ -73,10 +125,20 @@ services:
     depends_on:
       db-testnet:
         condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:3000/health || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources: *api-resources
+    logging: *logging
     command: sh -c "npx prisma migrate deploy && node dist/index.js"
 
   indexer-testnet:
     <<: [*app-build, *security]
+    restart: unless-stopped
     environment:
       STELLAR_NETWORK: testnet
       TESTNET_DATABASE_URL: postgresql://postgres:password@db-testnet:5432/soroban_testnet
@@ -89,6 +151,11 @@ services:
     depends_on:
       db-testnet:
         condition: service_healthy
+      api-testnet:
+        condition: service_healthy
+    deploy:
+      resources: *indexer-resources
+    logging: *logging
     command: node dist/indexer/run.js
 
   # ═══════════════════════════════════════════════════════════════════════════
@@ -96,6 +163,7 @@ services:
   # ═══════════════════════════════════════════════════════════════════════════
   db-mainnet:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
@@ -105,17 +173,20 @@ services:
     volumes:
       - pgdata-mainnet:/var/lib/postgresql/data
     healthcheck: *db-healthcheck
+    deploy:
+      resources: *db-resources
+    logging: *logging
     profiles: [mainnet]
 
   api-mainnet:
     <<: [*app-build, *security]
+    restart: unless-stopped
     ports:
       - '3001:3001'
     environment:
       STELLAR_NETWORK: mainnet
       MAINNET_DATABASE_URL: postgresql://postgres:password@db-mainnet:5432/soroban_mainnet
       DATABASE_URL: postgresql://postgres:password@db-mainnet:5432/soroban_mainnet
-      # Set MAINNET_RPC_URL to your provider (e.g. Validation Cloud)
       MAINNET_RPC_URL: ${MAINNET_RPC_URL:-}
       MAINNET_HORIZON_URL: https://horizon.stellar.org
       MAINNET_PASSPHRASE: "Public Global Stellar Network ; September 2015"
@@ -125,11 +196,21 @@ services:
     depends_on:
       db-mainnet:
         condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:3001/health || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources: *api-resources
+    logging: *logging
     command: sh -c "npx prisma migrate deploy && node dist/index.js"
     profiles: [mainnet]
 
   indexer-mainnet:
     <<: [*app-build, *security]
+    restart: unless-stopped
     environment:
       STELLAR_NETWORK: mainnet
       MAINNET_DATABASE_URL: postgresql://postgres:password@db-mainnet:5432/soroban_mainnet
@@ -142,6 +223,11 @@ services:
     depends_on:
       db-mainnet:
         condition: service_healthy
+      api-mainnet:
+        condition: service_healthy
+    deploy:
+      resources: *indexer-resources
+    logging: *logging
     command: node dist/indexer/run.js
     profiles: [mainnet]
 
@@ -150,6 +236,7 @@ services:
   # ═══════════════════════════════════════════════════════════════════════════
   db-devnet:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
@@ -159,10 +246,14 @@ services:
     volumes:
       - pgdata-devnet:/var/lib/postgresql/data
     healthcheck: *db-healthcheck
+    deploy:
+      resources: *db-resources
+    logging: *logging
     profiles: [devnet]
 
   api-devnet:
     <<: [*app-build, *security]
+    restart: unless-stopped
     ports:
       - '3002:3002'
     environment:
@@ -178,11 +269,21 @@ services:
     depends_on:
       db-devnet:
         condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:3002/health || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources: *api-resources
+    logging: *logging
     command: sh -c "npx prisma migrate deploy && node dist/index.js"
     profiles: [devnet]
 
   indexer-devnet:
     <<: [*app-build, *security]
+    restart: unless-stopped
     environment:
       STELLAR_NETWORK: devnet
       DEVNET_DATABASE_URL: postgresql://postgres:password@db-devnet:5432/soroban_devnet
@@ -195,6 +296,11 @@ services:
     depends_on:
       db-devnet:
         condition: service_healthy
+      api-devnet:
+        condition: service_healthy
+    deploy:
+      resources: *indexer-resources
+    logging: *logging
     command: node dist/indexer/run.js
     profiles: [devnet]
 
