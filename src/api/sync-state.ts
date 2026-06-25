@@ -10,6 +10,13 @@ import { prismaRead as prisma } from '../db';
 import { getLatestLedger } from '../indexer/rpc';
 import { asyncHandler } from '../middleware/asyncHandler';
 
+/**
+ * @swagger
+ * tags:
+ *   name: Sync State
+ *   description: Indexer synchronisation status
+ */
+
 export const syncStateRouter = Router();
 
 export async function getSyncState(): Promise<{
