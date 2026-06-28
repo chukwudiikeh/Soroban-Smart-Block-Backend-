@@ -41,6 +41,8 @@ import { tokenPricesRouter } from './token-prices';
 import { portfolioRouter } from './portfolio';
 import { alertsRouter } from './alerts';
 
+// ── Admin ─────────────────────────────────────────────────────────────────────
+import { adminErrorsRouter } from './admin/errors';
 // ── CSV Exports ───────────────────────────────────────────────────────────────
 import { requireApiKey } from '../middleware/apiKeyAuth';
 
@@ -89,6 +91,8 @@ router.use('/data-market', requireApiKey, dataMarketRouter);
 import { nftRouter } from './nft';
 router.use('/nft', nftRouter);
 
+// ── Admin Dashboards ──────────────────────────────────────────────────────────
+router.use('/admin/errors', adminErrorsRouter);
 // ── Bridge Tracker ─────────────────────────────────────────────────────────────
 import { bridgeTrackerRouter } from './bridge-tracker';
 router.use('/bridge-tracker', bridgeTrackerRouter);
@@ -97,15 +101,6 @@ router.use('/bridge-tracker', bridgeTrackerRouter);
 import { adminRouter } from './admin';
 router.use('/admin', adminRouter);
 
-// ── Gas Analytics Engine (#293) ────────────────────────────────────────────────
-import { gasRouter } from './gas';
-router.use('/gas', gasRouter);
-
-// ── Multi-Language SDK Suite (#292) ────────────────────────────────────────────
-import { sdksRouter, openApiSpecRouter } from './sdks';
-router.use('/sdks', sdksRouter);
-router.use('/', openApiSpecRouter);
-
-// ── Token Holder Analytics (#283) ─────────────────────────────────────────────
-import { tokenHoldersRouter } from './token-holders';
-router.use('/token-holders', tokenHoldersRouter);
+// ── Universal ABI Extraction (#289) ──────────────────────────────────────────
+import { abiExtractRouter } from './abi-extract';
+router.use('/abi-extract', abiExtractRouter);
