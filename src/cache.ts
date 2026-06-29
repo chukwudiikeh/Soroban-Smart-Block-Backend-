@@ -5,45 +5,52 @@ import { logger } from './logger';
 const CACHE_URL = config.cacheUrl ?? 'memory://';
 const USE_REDIS = CACHE_URL !== '' && !CACHE_URL.startsWith('memory://');
 
-/**
- * Keys under these prefixes are consistency-sensitive: their values are shared
- * across replicas and must never be served from an independent in-process store.
- * When Redis is configured but unavailable, cacheGet returns null for these keys
- * so callers fall back to the authoritative source rather than stale local state.
- *
- * Keys that permit local fallback (non-exhaustive): abi:, token-meta:, schema:
- * These are derived / re-fetchable and are safe to serve stale within a process.
- */
-const CONSISTENCY_SENSITIVE_PREFIXES: readonly string[] = [
-  'auth:',
-  'session:',
-  'ratelimit:',
-  'nonce:',
-  'token:',
-  'apikey:',
-];
-
-function isConsistencySensitive(key: string): boolean {
-  return CONSISTENCY_SENSITIVE_PREFIXES.some((prefix) => key.startsWith(prefix));
-}
-
-/** Returns the namespace prefix of a cache key for log/metric labels. */
-function redactKey(key: string): string {
-  const colonIdx = key.indexOf(':');
-  return colonIdx > 0 ? `${key.slice(0, colonIdx)}:[redacted]` : '[redacted]';
-}
+// Maximum number of entries kept in the process-local store before LRU eviction kicks in.
+const MAX_CACHE_SIZE = Math.max(1, parseInt(process.env.CACHE_MAX_SIZE ?? '1000'));
 
 interface MemoryEntry {
   payload: string;
   expiresAt: number | null;
 }
 
+// Map insertion order is used as LRU order: oldest entry is first.
 const memoryStore = new Map<string, MemoryEntry>();
 let redisClient: RedisClientType | null = null;
 let redisAvailable = false;
+let _evictionCount = 0;
+
+/** Returns current cache size and cumulative eviction count for metrics. */
+export function cacheStats(): { size: number; evictions: number } {
+  return { size: memoryStore.size, evictions: _evictionCount };
+}
 
 function localNow(): number {
   return Date.now();
+}
+
+/** Insert or update an entry, evicting the LRU entry when the cache is full. */
+function lruSet(key: string, entry: MemoryEntry): void {
+  if (memoryStore.has(key)) {
+    // Re-insert at tail to mark as most-recently used.
+    memoryStore.delete(key);
+  } else if (memoryStore.size >= MAX_CACHE_SIZE) {
+    const oldestKey = memoryStore.keys().next().value;
+    if (oldestKey !== undefined) {
+      memoryStore.delete(oldestKey);
+      _evictionCount++;
+    }
+  }
+  memoryStore.set(key, entry);
+}
+
+/** Read an entry and move it to the tail (most-recently used). */
+function lruGet(key: string): MemoryEntry | undefined {
+  const entry = memoryStore.get(key);
+  if (entry !== undefined) {
+    memoryStore.delete(key);
+    memoryStore.set(key, entry);
+  }
+  return entry;
 }
 
 async function getRedisClient(): Promise<RedisClientType | null> {
@@ -114,18 +121,13 @@ export async function cacheClose(): Promise<void> {
 
 export function cacheClear(): void {
   memoryStore.clear();
+  _evictionCount = 0;
 }
 
 export async function cacheGet<T>(key: string): Promise<T | null> {
   const normalizedKey = key;
 
-  // Consistency-sensitive keys must not be served from the local store when
-  // Redis is configured but unavailable — divergent per-process state is incorrect.
-  if (USE_REDIS && isConsistencySensitive(normalizedKey) && !redisAvailable) {
-    return null;
-  }
-
-  const local = memoryStore.get(normalizedKey);
+  const local = lruGet(normalizedKey);
   if (local) {
     if (isExpired(local)) {
       memoryStore.delete(normalizedKey);
@@ -144,8 +146,13 @@ export async function cacheGet<T>(key: string): Promise<T | null> {
   try {
     const payload = await client.get(normalizedKey);
     if (!payload) return null;
+    // Mirror the remaining Redis TTL into the local store so the entry expires at
+    // the same time as the Redis key, preventing stale data from living forever.
+    // pTTL returns: >0 = ms remaining, -1 = no expiry, -2 = key missing.
+    const pttl = await client.pTTL(normalizedKey);
+    const expiresAt = pttl > 0 ? localNow() + pttl : null;
     const value = JSON.parse(payload) as T;
-    memoryStore.set(normalizedKey, { payload, expiresAt: null });
+    lruSet(normalizedKey, { payload, expiresAt });
     return value;
   } catch (err) {
     logger.warn('[cache] Failed to read key from Redis', {
@@ -165,7 +172,7 @@ export async function cacheSet<T>(
 ): Promise<void> {
   const normalizedKey = key;
   const payload = JSON.stringify(value);
-  memoryStore.set(normalizedKey, {
+  lruSet(normalizedKey, {
     payload,
     expiresAt: buildExpiry(ttlSeconds),
   });
