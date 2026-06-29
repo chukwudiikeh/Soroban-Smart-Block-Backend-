@@ -12,12 +12,12 @@ function clampLimit(value: number | undefined | null, defaultVal: number): numbe
 }
 
 function encodeCursor(ledgerSequence: number, id: string): string {
-  return Buffer.from(JSON.stringify({ l: ledgerSequence, i: id })).toString('base64');
+  return Buffer.from(JSON.stringify({ l: ledgerSequence, i: id })).toString('base64url');
 }
 
 function decodeCursor(cursor: string): { ledgerSequence: number; id: string } | undefined {
   try {
-    const parsed = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8'));
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
     if (typeof parsed.l === 'number' && typeof parsed.i === 'string') {
       return { ledgerSequence: parsed.l, id: parsed.i };
     }
