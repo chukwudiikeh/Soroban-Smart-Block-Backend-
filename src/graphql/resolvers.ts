@@ -1,13 +1,30 @@
 import type { GraphQLContext } from './context';
 
+const MAX_LIMIT = 100;
+
 interface PageArgs {
   cursor?: string | null;
   limit?: number;
 }
 
-function toInt(v: unknown): number | undefined {
-  const n = typeof v === 'string' ? parseInt(v, 10) : (v as number);
-  return Number.isFinite(n) ? n : undefined;
+function clampLimit(value: number | undefined | null, defaultVal: number): number {
+  return Math.max(1, Math.min(value ?? defaultVal, MAX_LIMIT));
+}
+
+function encodeCursor(ledgerSequence: number, id: string): string {
+  return Buffer.from(JSON.stringify({ l: ledgerSequence, i: id })).toString('base64');
+}
+
+function decodeCursor(cursor: string): { ledgerSequence: number; id: string } | undefined {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8'));
+    if (typeof parsed.l === 'number' && typeof parsed.i === 'string') {
+      return { ledgerSequence: parsed.l, id: parsed.i };
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function paginateTransactions(
@@ -16,41 +33,73 @@ async function paginateTransactions(
   args: PageArgs,
   orderBy: Record<string, string>[] = [{ ledgerSequence: 'desc' }, { id: 'desc' }],
 ) {
-  const limit = Math.min(args.limit ?? 20, 100);
+  const limit = clampLimit(args.limit, 20);
+
+  let finalWhere: Record<string, unknown> = where;
   if (args.cursor) {
-    const cursorVal = toInt(args.cursor);
-    if (cursorVal !== undefined) {
-      where.ledgerSequence = { ...((where.ledgerSequence as object) || {}), lt: cursorVal };
+    const decoded = decodeCursor(args.cursor);
+    if (decoded) {
+      finalWhere = {
+        AND: [
+          where,
+          {
+            OR: [
+              { ledgerSequence: { lt: decoded.ledgerSequence } },
+              { ledgerSequence: decoded.ledgerSequence, id: { lt: decoded.id } },
+            ],
+          },
+        ],
+      };
     }
   }
+
   const rows = await ctx.prisma.transaction.findMany({
-    where: where as any,
+    where: finalWhere as any,
     orderBy,
     take: limit + 1,
   });
   const hasNext = rows.length > limit;
   const data = hasNext ? rows.slice(0, limit) : rows;
-  const nextCursor = hasNext && data.length > 0 ? data[data.length - 1].ledgerSequence : null;
-  return { data, hasNext, nextCursor: nextCursor != null ? String(nextCursor) : null };
+  const nextCursor =
+    hasNext && data.length > 0
+      ? encodeCursor(data[data.length - 1].ledgerSequence, data[data.length - 1].id)
+      : null;
+  return { data, hasNext, nextCursor };
 }
 
 async function paginateEvents(ctx: GraphQLContext, where: Record<string, unknown>, args: PageArgs) {
-  const limit = Math.min(args.limit ?? 20, 100);
+  const limit = clampLimit(args.limit, 20);
+
+  let finalWhere: Record<string, unknown> = where;
   if (args.cursor) {
-    const cursorVal = toInt(args.cursor);
-    if (cursorVal !== undefined) {
-      where.ledgerSequence = { ...((where.ledgerSequence as object) || {}), lt: cursorVal };
+    const decoded = decodeCursor(args.cursor);
+    if (decoded) {
+      finalWhere = {
+        AND: [
+          where,
+          {
+            OR: [
+              { ledgerSequence: { lt: decoded.ledgerSequence } },
+              { ledgerSequence: decoded.ledgerSequence, id: { lt: decoded.id } },
+            ],
+          },
+        ],
+      };
     }
   }
+
   const rows = await ctx.prisma.event.findMany({
-    where: where as any,
-    orderBy: { ledgerSequence: 'desc' },
+    where: finalWhere as any,
+    orderBy: [{ ledgerSequence: 'desc' }, { id: 'desc' }],
     take: limit + 1,
   });
   const hasNext = rows.length > limit;
   const data = hasNext ? rows.slice(0, limit) : rows;
-  const nextCursor = hasNext && data.length > 0 ? data[data.length - 1].ledgerSequence : null;
-  return { data, hasNext, nextCursor: nextCursor != null ? String(nextCursor) : null };
+  const nextCursor =
+    hasNext && data.length > 0
+      ? encodeCursor(data[data.length - 1].ledgerSequence, data[data.length - 1].id)
+      : null;
+  return { data, hasNext, nextCursor };
 }
 
 export const resolvers = {
@@ -152,7 +201,7 @@ export const resolvers = {
       return ctx.loaders.contractByAddress.load(parent.address);
     },
     async transfers(parent: any, args: { limit?: number }, ctx: GraphQLContext) {
-      const limit = Math.min(args.limit ?? 50, 100);
+      const limit = clampLimit(args.limit, 50);
       return ctx.prisma.event.findMany({
         where: { contractAddress: parent.address, eventType: 'transfer' },
         orderBy: { ledgerSequence: 'desc' },
@@ -197,7 +246,7 @@ export const resolvers = {
       );
     },
     async contracts(parent: { address: string }, args: { limit?: number }, ctx: GraphQLContext) {
-      const limit = Math.min(args.limit ?? 50, 100);
+      const limit = clampLimit(args.limit, 50);
       return ctx.prisma.contract.findMany({
         where: { transactions: { some: { sourceAccount: parent.address } } },
         take: limit,
@@ -257,7 +306,7 @@ export const resolvers = {
       return ctx.loaders.contractByAddress.load(args.address);
     },
     async contracts(_parent: unknown, args: { limit?: number }, ctx: GraphQLContext) {
-      const limit = Math.min(args.limit ?? 50, 100);
+      const limit = clampLimit(args.limit, 50);
       return ctx.prisma.contract.findMany({
         take: limit,
         orderBy: { createdAt: 'desc' },
@@ -276,18 +325,35 @@ export const resolvers = {
         __contract: contract,
       };
     },
-    async tokens(_parent: unknown, _args: unknown, ctx: GraphQLContext) {
+    async tokens(
+      _parent: unknown,
+      args: { cursor?: string; limit?: number },
+      ctx: GraphQLContext,
+    ) {
+      const limit = clampLimit(args.limit, 20);
+
       const contracts = await ctx.prisma.contract.findMany({
         where: { isToken: true },
-        orderBy: { tokenSymbol: 'asc' },
+        orderBy: [{ tokenSymbol: 'asc' }, { address: 'asc' }],
+        take: limit + 1,
+        ...(args.cursor ? { cursor: { address: args.cursor }, skip: 1 } : {}),
       });
-      return contracts.map((c) => ({
-        address: c.address,
-        name: c.tokenName,
-        symbol: c.tokenSymbol,
-        decimals: c.tokenDecimals,
-        __contract: c,
-      }));
+
+      const hasNext = contracts.length > limit;
+      const data = hasNext ? contracts.slice(0, limit) : contracts;
+      const nextCursor = hasNext && data.length > 0 ? data[data.length - 1].address : null;
+
+      return {
+        data: data.map((c) => ({
+          address: c.address,
+          name: c.tokenName,
+          symbol: c.tokenSymbol,
+          decimals: c.tokenDecimals,
+          __contract: c,
+        })),
+        hasNext,
+        nextCursor,
+      };
     },
     wallet(_parent: unknown, args: { address: string }, _ctx: GraphQLContext) {
       return { address: args.address };
